@@ -6,6 +6,8 @@ from torch.nn import functional as F
 import tiktoken
 from dataclasses import dataclass
 
+from gpt_loader import DataLoaderLite
+
 
 class Block(nn.Module):
     def __init__(self, config):
@@ -92,7 +94,10 @@ class GPT2(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+        # Weight Sharing Scheme
+        self.transformer.wte.weight = self.lm_head.weight
+
+    def forward(self, idx, targets=None):
         B, T = idx.size()
         assert T <= self.config.block_size, f"Cannot forward sequence length {T}, block size {B}"
 
@@ -106,7 +111,10 @@ class GPT2(nn.Module):
 
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        return logits
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -158,10 +166,29 @@ class GPT2(nn.Module):
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+train_loader = DataLoaderLite(4, 32)
+
+model = GPT2(GPTConfig())
+model.to(device)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+for idx in range(50):
+    x, y = train_loader.next_batch()
+    x, y = x.to(device), y.to(device)
+    logits, loss = model(x, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    print(f"step {idx}, loss: {loss.item()}")
+
+import sys;
+
+sys.exit(0);
+
+model = GPT2(GPTConfig())
 num_return_sequences = 5
 max_length = 30
-
-model = GPT2.from_pretrained('gpt2')
 model.eval()
 model.to(device)
 
