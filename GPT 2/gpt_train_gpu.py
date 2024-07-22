@@ -192,7 +192,8 @@ train_loader = DataLoaderLite(1, 1024)
 # using TF32 precision
 torch.set_float32_matmul_precision('high')
 
-model = GPT2(GPTConfig())
+# Changing vocab_size to a "nice" number AKA numbers with modulo 2 = 0
+model = GPT2(GPTConfig(vocab_size=50304))
 model.to(device)
 # Using torch.compile
 model = torch.compile(model)
