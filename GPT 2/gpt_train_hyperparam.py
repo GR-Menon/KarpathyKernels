@@ -1,3 +1,4 @@
+import inspect
 import time
 import math
 import torch
@@ -184,10 +185,36 @@ class GPT2(nn.Module):
 
         return model
 
+    def configure_optimizers(self, weight_decay: float = 0.1, learning_rate: float = 3e-4, device_type: str = "cpu"):
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+
+        # group parameters to apply weight decay
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        non_decay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': non_decay_params, 'weight_decay': 0.0},
+        ]
+
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_non_decay_params = sum(p.numel() for p in non_decay_params)
+
+        print(f"No. of decayed parameters: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"No. of non-decayed parameters: {len(non_decay_params)}, with {num_non_decay_params:,} parameters")
+
+        # kernel fusion
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == "cuda"
+        print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
+        return optimizer
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-train_loader = DataLoaderLite(2, 768)
+train_loader = DataLoaderLite(6, 512)
 
 # using TF32 precision
 torch.set_float32_matmul_precision('high')
@@ -221,7 +248,11 @@ def get_lr(it):
 
 
 # adjust optimizer betas and epsilon
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+# optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+
+# add weight decay + kernel fusion to optimizer
+optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device_type=device)
+
 for step in range(max_steps):
     t0 = time.time()
     x, y = train_loader.next_batch()
